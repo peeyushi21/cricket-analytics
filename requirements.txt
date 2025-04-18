@@ -1,7 +1,5 @@
 streamlit
 streamlit-sortables
-streamlit-dnd
-streamlit-aggrid
 pandas
 plotly
 scikit-learn
