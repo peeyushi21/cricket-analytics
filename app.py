@@ -1,85 +1,85 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import altair as alt
 
-st.set_page_config(page_title="Team Dismissal Analysis", layout="wide")
-st.title("🎯 Team Dismissal Breakdown")
-st.markdown("Select a team and season to view dismissal type distribution.")
-
-# Load Data
+# Load data
 @st.cache_data
 def load_data():
-    return pd.read_csv("data/mw_overall.csv")
+    batting_df = pd.read_csv("aggregated_batting_vs_bowling_type.csv")
+    match_df = pd.read_csv("match_metadata.csv")
+    
+    # Merge to get season info if not already in batting_df
+    if 'season' not in batting_df.columns:
+        batting_df = batting_df.merge(match_df[['match_id', 'season']], on='match_id', how='left')
+    
+    return batting_df
 
 df = load_data()
 
-# Define dismissal types
-dismissal_cols = ["bowled", "caught", "caught and bowled", "lbw", "run out"]
-required_cols = dismissal_cols + ["batting_team", "season"]
+# ----------------------------
+# Sidebar Inputs
+# ----------------------------
+st.sidebar.title("⚙️ Dashboard Filters")
 
-# Check for required columns
-missing_cols = [col for col in required_cols if col not in df.columns]
-if missing_cols:
-    st.error(f"Missing columns: {missing_cols}")
-else:
-    # STEP 1: Merge seasons like 2002 and 2003 into 2002/03
-    season_mapping = {}
+bowling_type = st.sidebar.selectbox(
+    "Select Bowling Type",
+    ["Right Fast", "Left Fast", "Spin"]
+)
 
-    # Extract all proper "YYYY/YY" seasons
-    combined_seasons = df["season"].dropna().unique()
-    combined_seasons = [s for s in combined_seasons if isinstance(s, str) and "/" in s]
+years = sorted(df['season'].dropna().unique())[::-1]
+selected_seasons = st.sidebar.multiselect(
+    "Select Seasons",
+    years,
+    default=years[:2]  # Default last 2 seasons
+)
 
-    for cs in combined_seasons:
-        try:
-            base_year = int(cs.split("/")[0])
-            season_mapping[str(base_year)] = cs
-            season_mapping[str(base_year + 1)] = cs
-        except:
-            pass
+top_n = st.sidebar.slider("Select number of top batsmen", 3, 20, 5)
 
-    # Normalize all seasons
-    def normalize_season(season_val):
-        season_str = str(season_val)
-        return season_mapping.get(season_str, season_str)
+# ----------------------------
+# Mapping for dynamic filtering
+# ----------------------------
+bowling_columns = {
+    "Right Fast": ("runs_against_right_fast", "balls_against_right_fast"),
+    "Left Fast": ("runs_against_left_fast", "balls_against_left_fast"),
+    "Spin": ("runs_against_spin", "balls_against_spin"),
+}
 
-    df["normalized_season"] = df["season"].apply(normalize_season)
+run_col, ball_col = bowling_columns[bowling_type]
 
-    # STEP 2: Select season
-    available_seasons = sorted(df["normalized_season"].unique())
-    selected_season = st.radio("📅 Select Season", available_seasons, horizontal=True)
+# Filter and calculate strike rate
+filtered_df = df[df["season"].isin(selected_seasons)]
 
-    # Filter data by selected season
-    season_df = df[df["normalized_season"] == selected_season]
+# Remove rows with zero balls
+filtered_df = filtered_df[filtered_df[ball_col] > 0].copy()
 
-    # STEP 3: Select team
-    teams = sorted(season_df["batting_team"].dropna().unique())
-    selected_team = st.selectbox("🏏 Select Team", teams)
+filtered_df["strike_rate"] = 100 * filtered_df[run_col] / filtered_df[ball_col]
 
-    # STEP 4: Summarize dismissals for the selected team
-    team_dismissals = (
-        season_df[season_df["batting_team"] == selected_team][dismissal_cols]
-        .sum()
-        .sort_values(ascending=False)
-        .reset_index()
-    )
-    team_dismissals.columns = ["Dismissal Type", "Count"]
-    team_dismissals = team_dismissals[team_dismissals["Count"] > 0]
+# Aggregate strike rates per batsman
+agg_df = filtered_df.groupby("name").agg({
+    run_col: "sum",
+    ball_col: "sum"
+}).reset_index()
 
-    # STEP 5: Plot pie chart with enhanced styling
-    fig = px.pie(
-        team_dismissals,
-        names="Dismissal Type",
-        values="Count",
-        title=f"{selected_team} Dismissal Breakdown - {selected_season}",
-        color_discrete_sequence=px.colors.qualitative.Set3,
-        hole=0.4
-    )
+agg_df = agg_df[agg_df[ball_col] > 0].copy()
+agg_df["strike_rate"] = 100 * agg_df[run_col] / agg_df[ball_col]
 
-    fig.update_traces(
-        textinfo='label+percent',
-        pull=[0.03] * len(team_dismissals),
-        marker=dict(line=dict(color='black', width=1)),
-        hovertemplate="%{label}: %{value} dismissals (%{percent})<extra></extra>"
-    )
+top_batsmen_df = agg_df.sort_values("strike_rate", ascending=False).head(top_n)
 
-    st.plotly_chart(fig, use_container_width=True)
+# ----------------------------
+# Display Results
+# ----------------------------
+st.title("🏏 IPL Auction Dashboard")
+st.subheader(f"Top {top_n} Batsmen by Strike Rate vs {bowling_type}")
+st.caption(f"Filtered by seasons: {', '.join(map(str, selected_seasons))}")
+
+# Bar chart
+chart = alt.Chart(top_batsmen_df).mark_bar().encode(
+    x=alt.X('strike_rate:Q', title='Strike Rate'),
+    y=alt.Y('name:N', sort='-x', title='Batsman'),
+    tooltip=["name", "strike_rate"]
+).properties(
+    width=700,
+    height=400
+)
+
+st.altair_chart(chart, use_container_width=True)
