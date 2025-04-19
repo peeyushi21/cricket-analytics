@@ -6,11 +6,11 @@ import altair as alt
 @st.cache_data
 def load_data():
     batting_df = pd.read_csv("aggregated_batting_vs_bowling_type.csv")
-    match_df = pd.read_csv("match_metadata.csv")
+    # match_df = pd.read_csv("match_metadata.csv")
     
-    # Merge to get season info if not already in batting_df
-    if 'season' not in batting_df.columns:
-        batting_df = batting_df.merge(match_df[['match_id', 'season']], on='match_id', how='left')
+    # # Merge to get season info if not already in batting_df
+    # if 'season' not in batting_df.columns:
+    #     batting_df = batting_df.merge(match_df[['match_id', 'season']], on='match_id', how='left')
     
     return batting_df
 
